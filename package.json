@@ -1,0 +1,16 @@
+{
+  "name": "autopilot-final",
+  "version": "1.0.0",
+  "description": "Autopilot Dropshipper Shopify integration backend",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "morgan": "^1.10.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2"
+  }
+}
