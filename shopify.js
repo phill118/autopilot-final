@@ -67,4 +67,30 @@ router.get("/callback", async (req, res) => {
   }
 });
 
+router.get("/test", async (req, res) => {
+  try {
+    const accessToken = process.env.SHOPIFY_ACCESS_TOKEN;
+    if (!accessToken) {
+      return res.status(401).json({ ok: false, error: "Missing Shopify access token" });
+    }
+
+    const response = await fetch(
+      "https://all-sorts-dropped.myshopify.com/admin/api/2023-10/shop.json",
+      {
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const data = await response.json();
+    res.json({ ok: true, shop: data.shop });
+  } catch (err) {
+    console.error("❌ Shopify test failed:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;
+
