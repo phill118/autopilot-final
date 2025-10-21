@@ -56,8 +56,10 @@ router.get("/sync", async (req, res) => {
   _price: price,
   _inventory_quantity: qty,
   _image_url: img,
-}).then(() => ({ error: null })).catch((error) => ({ error }));
-      if (error) console.error("❌ Upsert error:", error.message);
+});
+
+if (error) console.error("❌ Supabase error:", error.message);
+
     }
 
     res.json({ ok: true, count: products.length });
