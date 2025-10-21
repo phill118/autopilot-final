@@ -19,7 +19,10 @@ router.get("/auth", (req, res) => {
 
   const scopes = process.env.SCOPES;
   const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${
-    process.env.SHOPIFY_API_KEY
+    process.env.SHOPIFY_ACCESS_TOKEN = data.access_token;
+console.log("✅ Shopify store successfully connected!");
+console.log("🔑 Access Token:", data.access_token);
+
   }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
     redirectUri
   )}&state=${state}`;
@@ -93,4 +96,5 @@ router.get("/test", async (req, res) => {
 });
 
 export default router;
+
 
