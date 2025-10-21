@@ -49,14 +49,14 @@ router.get("/sync", async (req, res) => {
       const img = p.image?.src || null;
 
       const { error } = await supabase.rpc("upsert_product", {
-        _shop_domain: shop,
-        _shopify_product_id: p.id,
-        _title: p.title,
-        _status: p.status,
-        _price: price,
-        _inventory_quantity: qty,
-        _image_url: img,
-      });
+  _shop_domain: shop,
+  _shopify_product_id: p.id,
+  _title: p.title,
+  _status: p.status,
+  _price: price,
+  _inventory_quantity: qty,
+  _image_url: img,
+}).then(() => ({ error: null })).catch((error) => ({ error }));
       if (error) console.error("❌ Upsert error:", error.message);
     }
 
