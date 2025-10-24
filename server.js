@@ -2,10 +2,13 @@
 import express from "express";
 import morgan from "morgan";
 import dotenv from "dotenv";
-import shopify from "./shopify.js";
-import products from "./products.js"; 
+import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+
+import shopify from "./shopify.js";
+import products from "./products.js";
+import productsList from "./productsList.js"; // or "./routes/productsList.js" if inside a folder
 
 dotenv.config();
 
@@ -13,16 +16,20 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ✅ Import the list route safely (works whether it's in /routes or root)
-import productsList from "./productsList.js"; 
-// 👉 If you keep the file inside a folder, change to:
-// import productsList from "./routes/productsList.js";
-
 const app = express();
 app.use(morgan("dev"));
 app.use(express.json());
 
-// ✅ Home route
+// ✅ Enable CORS (for dashboard frontend)
+app.use(
+  cors({
+    origin: "*", // you can replace * with your Vercel domain later for security
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+  })
+);
+
+// ✅ Simple home page for testing
 app.get("/", (_req, res) => {
   res.send(`
     <h1>🚀 Autopilot Final</h1>
@@ -33,17 +40,17 @@ app.get("/", (_req, res) => {
   `);
 });
 
-// ✅ Health check
+// ✅ Health check route
 app.get("/api/status", (_req, res) => res.json({ ok: true }));
 
-// ✅ Shopify routes
+// ✅ Shopify API routes
 app.use("/api/shopify", shopify);
 
-// ✅ Product routes
+// ✅ Product API routes
 app.use("/api/products", products);
 app.use("/api/products", productsList);
 
-// ✅ Start server
+// ✅ Start the server
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
