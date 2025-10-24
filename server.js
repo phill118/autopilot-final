@@ -3,6 +3,7 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 import shopify from "./shopify.js";
 import products from "./products.js"; // 👈 NEW import
+import productsList from "./routes/productsList.js"
 
 dotenv.config();
 
@@ -27,7 +28,8 @@ app.get("/api/status", (_req, res) => res.json({ ok: true }));
 app.use("/api/shopify", shopify);
 
 // ✅ Product routes
-app.use("/api/products", products); // 👈 NEW line
+app.use("/api/products", products);       // <-- your existing sync route
+app.use("/api/products", productsList);   // <-- the new list route
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
@@ -35,3 +37,4 @@ app.listen(port, () => {
   console.log(`🌍 App URL: ${process.env.SHOPIFY_APP_URL}`);
   console.log(`🧭 Using redirectUri: ${process.env.SHOPIFY_APP_URL}/api/shopify/callback`);
 });
+
