@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import { runAutopilot } from "./autopilotEngine.js";
 
 import shopify from "./shopify.js";
 import products from "./products.js";
@@ -49,6 +50,18 @@ app.use("/api/shopify", shopify);
 // ✅ Product API routes
 app.use("/api/products", products);
 app.use("/api/products", productsList);
+
+// ✅ Autopilot AI Route
+app.get("/api/autopilot/run", async (req, res) => {
+  const shop = req.query.shop || "all-sorts-dropped.myshopify.com";
+  try {
+    const result = await runAutopilot(shop);
+    res.json({ ok: true, message: "Autopilot completed successfully", ...result });
+  } catch (err) {
+    console.error("❌ Autopilot error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 // ✅ Start the server
 const port = process.env.PORT || 8080;
