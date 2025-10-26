@@ -1,7 +1,7 @@
 // autopilotEngine.js
 import { createClient } from "@supabase/supabase-js";
 import fetch from "node-fetch";
-import { getUpcomingEvents } from "./seasonalEvents.js"; // 👈 new import
+import { getUpcomingEvents } from "./seasonalEvents.js"; // 👈 seasonal events import
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -9,9 +9,29 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// 🧩 Helper: get shop mode (manual, assist, full)
+async function getShopMode(shop) {
+  const { data, error } = await supabase
+    .from("shops")
+    .select("autopilot_mode")
+    .eq("shop_domain", shop)
+    .single();
+
+  if (error) {
+    console.error("⚠️ Failed to fetch autopilot_mode:", error.message);
+    return "manual"; // fallback
+  }
+
+  return data?.autopilot_mode || "manual";
+}
+
 // 🧠 The Autopilot Brain
 export async function runAutopilot(shop) {
   console.log(`🤖 Running autopilot for ${shop}...`);
+
+  // 🧭 Get shop's current AI mode
+  const mode = await getShopMode(shop);
+  console.log(`🧭 Autopilot mode: ${mode.toUpperCase()}`);
 
   // 🎉 1️⃣ Check for upcoming seasonal events
   const events = await getUpcomingEvents();
@@ -42,7 +62,15 @@ export async function runAutopilot(shop) {
 
   console.log(`⚠️ Low stock: ${lowStock.length} | 💰 Cheap: ${cheap.length}`);
 
-  // 4️⃣ Example AI suggestions
+  // 4️⃣ Example AI suggestions based on mode
+  if (mode === "manual") {
+    console.log("🧑‍💼 Mode: Manual — only suggest actions, no automation.");
+  } else if (mode === "assist") {
+    console.log("🤝 Mode: Assist — AI will suggest and queue changes.");
+  } else if (mode === "full") {
+    console.log("🚀 Mode: Full AI — executing automated updates.");
+  }
+
   for (const p of lowStock) {
     console.log(`🧩 Suggest restocking: ${p.title}`);
   }
@@ -50,21 +78,20 @@ export async function runAutopilot(shop) {
     console.log(`💡 Suggest increasing price: ${p.title}`);
   }
 
-  // 5️⃣ Future: tie this into seasonal events
-  // If event tags match product titles or categories -> boost visibility or ads
+  // 5️⃣ Seasonal event awareness
   if (events.length > 0) {
     const activeEvent = events[0];
-    const matched = products.filter(p =>
-      activeEvent.product_keywords?.some(k =>
+    const matched = products.filter((p) =>
+      activeEvent.product_keywords?.some((k) =>
         p.title.toLowerCase().includes(k.toLowerCase())
       )
     );
     console.log(`🎯 Matched ${matched.length} products for ${activeEvent.name}`);
-    matched.forEach(p =>
+    matched.forEach((p) =>
       console.log(`⭐ Highlight for event: ${p.title}`)
     );
   }
 
   console.log(`✅ Autopilot finished for ${shop}`);
-  return { ok: true, analyzed: products.length };
+  return { ok: true, analyzed: products.length, mode };
 }
