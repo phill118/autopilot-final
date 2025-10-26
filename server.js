@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createClient } from "@supabase/supabase-js"; // 👈 ADD THIS
 import { runAutopilot } from "./autopilotEngine.js";
 
 import shopify from "./shopify.js";
@@ -17,6 +18,12 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ✅ Initialize Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
 const app = express();
 app.use(morgan("dev"));
 app.use(express.json());
@@ -24,9 +31,9 @@ app.use(express.json());
 // ✅ Enable CORS (for dashboard frontend)
 app.use(
   cors({
-    origin: "*", // you can replace * with your Vercel domain later for security
+    origin: "*", // replace "*" with your Vercel domain later for security
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
@@ -46,6 +53,24 @@ app.get("/api/status", (_req, res) => res.json({ ok: true }));
 
 // ✅ Shopify API routes
 app.use("/api/shopify", shopify);
+
+// 🧩 Update Autopilot Mode
+app.post("/api/shopify/mode", async (req, res) => {
+  const { shop, mode } = req.body;
+  try {
+    const { error } = await supabase
+      .from("shops")
+      .update({ autopilot_mode: mode })
+      .eq("shop_domain", shop);
+
+    if (error) throw error;
+    console.log(`🧭 Mode for ${shop} updated to: ${mode}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ Failed to update mode:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 // ✅ Product API routes
 app.use("/api/products", products);
