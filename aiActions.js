@@ -1,3 +1,4 @@
+// aiActions.js
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 
@@ -8,7 +9,28 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ✅ Update action status (approve or reject) + record feedback
+// ✅ 1️⃣ Get all AI actions for a shop
+router.get("/list", async (req, res) => {
+  const { shop } = req.query;
+
+  if (!shop) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
+
+  const { data, error } = await supabase
+    .from("ai_actions")
+    .select("*")
+    .eq("shop_domain", shop)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+
+  res.json({ ok: true, count: data.length, actions: data });
+});
+
+// ✅ 2️⃣ Update AI action (approve/reject) — includes feedback
 router.post("/update", async (req, res) => {
   const { id, status } = req.body;
 
@@ -16,7 +38,6 @@ router.post("/update", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Missing id or status" });
   }
 
-  // 1️⃣ Update ai_actions table
   const { data: actionData, error: actionError } = await supabase
     .from("ai_actions")
     .update({ status })
@@ -28,7 +49,6 @@ router.post("/update", async (req, res) => {
     return res.status(500).json({ ok: false, error: actionError.message });
   }
 
-  // 2️⃣ Record feedback
   const feedback = {
     shop_domain: actionData.shop_domain,
     product_id: actionData.product_id,
@@ -37,7 +57,10 @@ router.post("/update", async (req, res) => {
     reason: actionData.reason || "user feedback"
   };
 
-  const { error: feedbackError } = await supabase.from("ai_feedback").insert([feedback]);
+  const { error: feedbackError } = await supabase
+    .from("ai_feedback")
+    .insert([feedback]);
+
   if (feedbackError) {
     console.error("⚠️ Failed to record feedback:", feedbackError.message);
   } else {
