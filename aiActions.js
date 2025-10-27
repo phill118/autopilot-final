@@ -25,7 +25,7 @@ router.get("/list", async (req, res) => {
   res.json({ ok: true, count: data.length, actions: data });
 });
 
-// ✅ Update action status (approve or reject)
+// ✅ Update action status (approve or reject) + record feedback
 router.post("/update", async (req, res) => {
   const { id, status } = req.body;
 
@@ -33,14 +33,36 @@ router.post("/update", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Missing id or status" });
   }
 
-  const { error } = await supabase
+  // 1️⃣ Update ai_actions table
+  const { data: actionData, error: actionError } = await supabase
     .from("ai_actions")
     .update({ status })
-    .eq("id", id);
+    .eq("id", id)
+    .select()
+    .single();
 
-  if (error) return res.status(500).json({ ok: false, error: error.message });
+  if (actionError) {
+    return res.status(500).json({ ok: false, error: actionError.message });
+  }
+
+  // 2️⃣ Record feedback in ai_feedback for long-term learning
+  const feedback = {
+    shop_domain: actionData.shop_domain,
+    product_id: actionData.product_id,
+    action: actionData.action,
+    feedback: status === "approved" ? "approved" : "rejected",
+    reason: actionData.reason || "user feedback"
+  };
+
+  const { error: feedbackError } = await supabase
+    .from("ai_feedback")
+    .insert([feedback]);
+
+  if (feedbackError) {
+    console.error("⚠️ Failed to record feedback:", feedbackError.message);
+  } else {
+    console.log(`🧠 Feedback recorded: ${feedback.feedback} → ${feedback.action}`);
+  }
 
   res.json({ ok: true, message: `Action ${id} marked as ${status}` });
 });
-
-export default router;
