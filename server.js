@@ -11,6 +11,7 @@ import { runAutopilot } from "./autopilotEngine.js";
 import shopify from "./shopify.js";
 import products from "./products.js";
 import productsList from "./productsList.js"; // or "./routes/productsList.js" if inside a folder
+import aiActions from "./aiActions.js";
 
 dotenv.config();
 
@@ -75,6 +76,7 @@ app.post("/api/shopify/mode", async (req, res) => {
 // ✅ Product API routes
 app.use("/api/products", products);
 app.use("/api/products", productsList);
+app.use("/api/ai", aiActions);
 
 // ✅ Autopilot AI Route
 app.get("/api/autopilot/run", async (req, res) => {
