@@ -8,6 +8,26 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// 🧠 Learn from past AI feedback
+async function getFeedbackTrends(shop_domain, product_id, action) {
+  const { data, error } = await supabase
+    .from("ai_feedback")
+    .select("feedback")
+    .eq("shop_domain", shop_domain)
+    .eq("product_id", product_id)
+    .eq("action", action);
+
+  if (error) {
+    console.error("⚠️ Failed to fetch feedback trends:", error.message);
+    return { approved: 0, rejected: 0 };
+  }
+
+  const approved = data.filter(f => f.feedback === "approved").length;
+  const rejected = data.filter(f => f.feedback === "rejected").length;
+
+  return { approved, rejected };
+}
+
 // 🧩 Log every AI action
 async function logAIAction(shop_domain, product_id, action, details = {}, reason = "", status = "suggested") {
   const { error } = await supabase.from("ai_actions").insert([
@@ -17,7 +37,7 @@ async function logAIAction(shop_domain, product_id, action, details = {}, reason
   else console.log(`🧾 Logged AI action: ${action} for product ${product_id}`);
 }
 
-// 🧠 Generate a reasoning string (lightweight simulated GPT reasoning)
+// 🧠 Generate a reasoning string
 function generateReason(product, performance, newPrice, oldPrice, event) {
   const change = newPrice > oldPrice ? "increase" : "decrease";
   let reason = `Price ${change} from £${oldPrice} to £${newPrice}. `;
@@ -30,7 +50,8 @@ function generateReason(product, performance, newPrice, oldPrice, event) {
     reason += "Good profit margin allows for small price adjustments. ";
   if (product.inventory_quantity < 5)
     reason += "Low inventory, increasing price slightly to protect margin. ";
-  if (event && event.product_keywords?.some(k => product.title.toLowerCase().includes(k.toLowerCase())))
+  if (event && event.product_keywords?.some(k =>
+    product.title.toLowerCase().includes(k.toLowerCase())))
     reason += `Relevant to ${event.name}, boosting price for seasonal demand. `;
 
   return reason.trim();
@@ -48,7 +69,7 @@ function calculateOptimalPrice(product, performance, event) {
   if (product.inventory_quantity < 5)
     newPrice = price * 1.10;
   if (event && event.product_keywords?.some(k =>
-      product.title.toLowerCase().includes(k.toLowerCase())))
+    product.title.toLowerCase().includes(k.toLowerCase())))
     newPrice = price * 1.15;
 
   return Math.round(newPrice * 100) / 100;
@@ -79,7 +100,7 @@ export async function runAutopilot(shop) {
   if (error) throw new Error(error.message);
   if (!products?.length) throw new Error("No products found.");
 
-  // 4️⃣ Evaluate & act
+  // 4️⃣ Evaluate each product
   for (const p of products) {
     const { data: perf } = await supabase
       .from("product_performance")
@@ -90,6 +111,14 @@ export async function runAutopilot(shop) {
 
     const newPrice = calculateOptimalPrice(p, perf, activeEvent);
     const priceChanged = newPrice !== parseFloat(p.price);
+
+    // 🧩 Check AI feedback before deciding
+    const trend = await getFeedbackTrends(shop, p.shopify_product_id, "price_adjustment");
+
+    if (trend.rejected > trend.approved * 2) {
+      console.log(`⚖️ Skipping price change for ${p.title} — user disagreed before`);
+      continue;
+    }
 
     if (priceChanged) {
       const reason = generateReason(p, perf, newPrice, parseFloat(p.price), activeEvent);
