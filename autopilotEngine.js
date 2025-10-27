@@ -1,7 +1,7 @@
 // autopilotEngine.js
 import { createClient } from "@supabase/supabase-js";
 import fetch from "node-fetch";
-import { getUpcomingEvents } from "./seasonalEvents.js"; // 👈 new import
+import { getUpcomingEvents } from "./seasonalEvents.js"; // 👈 import for events
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -17,8 +17,8 @@ async function logAIAction(shop_domain, product_id, action, details = {}, status
       product_id,
       action,
       details,
-      status
-    }
+      status,
+    },
   ]);
 
   if (error) {
@@ -26,6 +26,24 @@ async function logAIAction(shop_domain, product_id, action, details = {}, status
   } else {
     console.log(`🧾 Logged AI action: ${action} for product ${product_id}`);
   }
+}
+
+// 🧮 Helper — update or insert product performance snapshot
+async function recordPerformance(shop_domain, product_id, metrics) {
+  const { error } = await supabase
+    .from("product_performance")
+    .upsert(
+      {
+        shop_domain,
+        product_id,
+        ...metrics,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: ["shop_domain", "product_id"] }
+    );
+
+  if (error) console.error("❌ Failed to record performance:", error.message);
+  else console.log(`📊 Performance updated for ${product_id}`);
 }
 
 // 🧠 The Autopilot Brain
@@ -69,15 +87,15 @@ export async function runAutopilot(shop) {
   for (const p of cheap) {
     await logAIAction(shop, p.shopify_product_id, "increase_price_suggested", {
       title: p.title,
-      current_price: p.price
+      current_price: p.price,
     });
   }
 
   // 5️⃣ Seasonal event matching
   if (events.length > 0) {
     const activeEvent = events[0];
-    const matched = products.filter(p =>
-      activeEvent.product_keywords?.some(k =>
+    const matched = products.filter((p) =>
+      activeEvent.product_keywords?.some((k) =>
         p.title.toLowerCase().includes(k.toLowerCase())
       )
     );
@@ -86,9 +104,22 @@ export async function runAutopilot(shop) {
     for (const p of matched) {
       await logAIAction(shop, p.shopify_product_id, "event_highlight", {
         event: activeEvent.name,
-        title: p.title
+        title: p.title,
       });
     }
+  }
+
+  // 6️⃣ Record performance metrics (simulated for now)
+  for (const p of products) {
+    const metrics = {
+      total_sales: Math.floor(Math.random() * 100),
+      total_revenue: parseFloat(p.price) * Math.random() * 100,
+      profit_margin: 0.25 + Math.random() * 0.3,
+      conversion_rate: 0.02 + Math.random() * 0.05,
+      last_30d_sales: Math.floor(Math.random() * 20),
+      last_30d_revenue: parseFloat(p.price) * Math.random() * 20,
+    };
+    await recordPerformance(shop, p.shopify_product_id, metrics);
   }
 
   console.log(`✅ Autopilot finished for ${shop}`);
