@@ -1,3 +1,13 @@
+import express from "express";
+import { createClient } from "@supabase/supabase-js";
+
+const router = express.Router();
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
 // ✅ Update action status (approve or reject) + record feedback
 router.post("/update", async (req, res) => {
   const { id, status } = req.body;
