@@ -8,11 +8,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 🧠 Learn from past AI feedback
+// 🧠 Learn from past AI actions (using ai_actions table)
 async function getFeedbackTrends(shop_domain, product_id, action) {
   const { data, error } = await supabase
-    .from("ai_feedback")
-    .select("feedback")
+    .from("ai_actions")
+    .select("status")
     .eq("shop_domain", shop_domain)
     .eq("product_id", product_id)
     .eq("action", action);
@@ -22,8 +22,8 @@ async function getFeedbackTrends(shop_domain, product_id, action) {
     return { approved: 0, rejected: 0 };
   }
 
-  const approved = data.filter(f => f.feedback === "approved").length;
-  const rejected = data.filter(f => f.feedback === "rejected").length;
+  const approved = data?.filter(f => f.status === "approved").length || 0;
+  const rejected = data?.filter(f => f.status === "rejected").length || 0;
 
   return { approved, rejected };
 }
@@ -117,6 +117,14 @@ export async function runAutopilot(shop) {
 
     if (trend.rejected > trend.approved * 2) {
       console.log(`⚖️ Skipping price change for ${p.title} — user disagreed before`);
+      await logAIAction(
+        shop,
+        p.shopify_product_id,
+        "price_skipped_due_to_feedback",
+        { reason: "User previously rejected similar action" },
+        "User feedback suppression",
+        "skipped"
+      );
       continue;
     }
 
