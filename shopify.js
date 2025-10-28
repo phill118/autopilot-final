@@ -1,4 +1,4 @@
-import express from 'express';
+import express from 'express'; 
 import fetch from 'node-fetch';
 import crypto from 'crypto';
 
@@ -106,6 +106,19 @@ router.get('/test', async (_req, res) => {
   }
 });
 
+// 4️⃣ NEW — Update product price (used by AI autopilot)
+router.post("/update-price", async (req, res) => {
+  const { shop, product_id, new_price } = req.body;
+
+  try {
+    console.log(`🛍️ Updating Shopify price for ${product_id} → £${new_price}`);
+
+    // (Simulated response — replace with Shopify API call later)
+    return res.json({ ok: true, message: "Price updated successfully (simulated)" });
+  } catch (err) {
+    console.error("❌ Shopify update error:", err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;
-
-
