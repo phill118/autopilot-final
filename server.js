@@ -5,13 +5,14 @@ import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createClient } from "@supabase/supabase-js"; // 👈 ADD THIS
+import { createClient } from "@supabase/supabase-js";
 import { runAutopilot } from "./autopilotEngine.js";
 
 import shopify from "./shopify.js";
 import products from "./products.js";
 import productsList from "./productsList.js"; // or "./routes/productsList.js" if inside a folder
 import aiActions from "./aiActions.js";
+import aiFeedback from "./aiFeedback.js"; // ✅ NEW — feedback route
 
 dotenv.config();
 
@@ -77,6 +78,7 @@ app.post("/api/shopify/mode", async (req, res) => {
 app.use("/api/products", products);
 app.use("/api/products", productsList);
 app.use("/api/ai", aiActions);
+app.use("/api/feedback", aiFeedback); // ✅ NEW — attach feedback endpoint
 
 // ✅ Autopilot AI Route
 app.get("/api/autopilot/run", async (req, res) => {
