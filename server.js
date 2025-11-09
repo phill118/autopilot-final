@@ -13,7 +13,8 @@ import products from "./products.js";
 import productsList from "./productsList.js";
 import aiActions from "./aiActions.js";
 import aiFeedback from "./aiFeedback.js";
-import performance from "./performance.js"; // 👈 NEW
+import performance from "./performance.js";
+import eventsApi from "./seasonalEventsApi.js";
 
 dotenv.config();
 
@@ -87,6 +88,9 @@ app.use("/api/feedback", aiFeedback);
 
 // ✅ Performance routes
 app.use("/api/performance", performance);
+
+// ✅ Seasonal events routes
+app.use("/api/events", eventsApi);
 
 // ✅ Autopilot AI Route
 app.get("/api/autopilot/run", async (req, res) => {
