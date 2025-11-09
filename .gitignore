@@ -1,0 +1,10 @@
+# Ignore environment files
+.env
+
+# Node modules and build stuff
+node_modules
+dist
+*.log
+
+# Misc
+.DS_Store
