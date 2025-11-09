@@ -10,9 +10,10 @@ import { runAutopilot } from "./autopilotEngine.js";
 
 import shopify from "./shopify.js";
 import products from "./products.js";
-import productsList from "./productsList.js"; // or "./routes/productsList.js" if inside a folder
+import productsList from "./productsList.js";
 import aiActions from "./aiActions.js";
-import aiFeedback from "./aiFeedback.js"; // ✅ NEW — feedback route
+import aiFeedback from "./aiFeedback.js";
+import performance from "./performance.js"; // 👈 NEW
 
 dotenv.config();
 
@@ -33,7 +34,7 @@ app.use(express.json());
 // ✅ Enable CORS (for dashboard frontend)
 app.use(
   cors({
-    origin: "*", // replace "*" with your Vercel domain later for security
+    origin: "*", // later you can lock this to your Vercel domain
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -56,7 +57,7 @@ app.get("/api/status", (_req, res) => res.json({ ok: true }));
 // ✅ Shopify API routes
 app.use("/api/shopify", shopify);
 
-// 🧩 Update Autopilot Mode
+// 🧭 Update Autopilot Mode
 app.post("/api/shopify/mode", async (req, res) => {
   const { shop, mode } = req.body;
   try {
@@ -77,8 +78,15 @@ app.post("/api/shopify/mode", async (req, res) => {
 // ✅ Product API routes
 app.use("/api/products", products);
 app.use("/api/products", productsList);
+
+// ✅ AI actions routes
 app.use("/api/ai", aiActions);
-app.use("/api/feedback", aiFeedback); // ✅ NEW — attach feedback endpoint
+
+// ✅ AI feedback routes
+app.use("/api/feedback", aiFeedback);
+
+// ✅ Performance routes
+app.use("/api/performance", performance);
 
 // ✅ Autopilot AI Route
 app.get("/api/autopilot/run", async (req, res) => {
