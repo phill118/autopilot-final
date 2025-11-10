@@ -6,52 +6,11 @@ import { createClient } from "@supabase/supabase-js";
 
 const router = express.Router();
 
-// ✅ Supabase client (for saving + reading tokens)
+// ✅ Supabase client (backend-only, safe)
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-
-// 👉 Helper: save access token for a shop
-async function saveShopToken(shop_domain, access_token) {
-  try {
-    const { error } = await supabase
-      .from("shops")
-      .upsert(
-        { shop_domain, access_token },
-        { onConflict: "shop_domain" }
-      );
-
-    if (error) {
-      console.error("❌ Failed to save shop token:", error.message);
-    } else {
-      console.log(`💾 Saved token for shop: ${shop_domain}`);
-    }
-  } catch (err) {
-    console.error("❌ Exception saving shop token:", err.message);
-  }
-}
-
-// 👉 Helper: read access token for a shop
-async function getShopToken(shop_domain) {
-  try {
-    const { data, error } = await supabase
-      .from("shops")
-      .select("access_token")
-      .eq("shop_domain", shop_domain)
-      .maybeSingle();
-
-    if (error) {
-      console.error("❌ Failed to get shop token:", error.message);
-      return null;
-    }
-
-    return data?.access_token || null;
-  } catch (err) {
-    console.error("❌ Exception getting shop token:", err.message);
-    return null;
-  }
-}
 
 // 1️⃣ Start Shopify OAuth
 router.get("/auth", (req, res) => {
@@ -82,7 +41,7 @@ router.get("/auth", (req, res) => {
   res.redirect(installUrl);
 });
 
-// 2️⃣ Handle Shopify callback (save token)
+// 2️⃣ Handle Shopify OAuth callback
 router.get("/callback", async (req, res) => {
   const shop = req.query.shop;
   const hmac = req.query.hmac;
@@ -92,7 +51,7 @@ router.get("/callback", async (req, res) => {
     return res.status(400).send("Missing parameters");
   }
 
-  // Verify HMAC
+  // ✅ Verify HMAC
   const message = Object.keys(req.query)
     .filter((key) => key !== "hmac")
     .sort()
@@ -109,15 +68,18 @@ router.get("/callback", async (req, res) => {
   }
 
   try {
-    const response = await fetch("https://" + shop + "/admin/oauth/access_token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: process.env.SHOPIFY_API_KEY,
-        client_secret: process.env.SHOPIFY_API_SECRET,
-        code: code,
-      }),
-    });
+    const response = await fetch(
+      "https://" + shop + "/admin/oauth/access_token",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: process.env.SHOPIFY_API_KEY,
+          client_secret: process.env.SHOPIFY_API_SECRET,
+          code: code,
+        }),
+      }
+    );
 
     const data = await response.json();
 
@@ -126,14 +88,27 @@ router.get("/callback", async (req, res) => {
       return res.status(500).send("Failed to retrieve access token.");
     }
 
-    // ✅ Save in env (runtime) AND Supabase (persistent)
-    process.env.SHOPIFY_ACCESS_TOKEN = data.access_token;
-    await saveShopToken(shop, data.access_token);
+    const accessToken = data.access_token;
 
     console.log("✅ Shopify store successfully connected!");
-    console.log("🔑 Access Token:", data.access_token);
+    console.log("🔑 Access Token:", accessToken);
 
-    res.send('✅ Shopify store successfully connected!');
+    // ✅ Store token in Supabase shops table
+    const { error: upsertError } = await supabase.from("shops").upsert(
+      {
+        shop_domain: shop,
+        access_token: accessToken,
+      },
+      { onConflict: "shop_domain" } // requires unique constraint on shop_domain
+    );
+
+    if (upsertError) {
+      console.error("❌ Failed to upsert shop token:", upsertError.message);
+    } else {
+      console.log(`🗃️ Stored access token for shop: ${shop}`);
+    }
+
+    res.send("✅ Shopify store successfully connected!");
   } catch (err) {
     console.error("❌ Error exchanging code for token:", err);
     res.status(500).send("Error exchanging code for token.");
@@ -141,17 +116,25 @@ router.get("/callback", async (req, res) => {
 });
 
 // 3️⃣ Test Shopify API connection
-router.get("/test", async (_req, res) => {
+router.get("/test", async (req, res) => {
+  const shop = req.query.shop || "all-sorts-dropped.myshopify.com";
+
   try {
-    const shop = "all-sorts-dropped.myshopify.com";
+    // ✅ Fetch token from Supabase
+    const { data: shopRow, error } = await supabase
+      .from("shops")
+      .select("access_token")
+      .eq("shop_domain", shop)
+      .single();
 
-    // Prefer stored token
-    let token = await getShopToken(shop);
-    if (!token) token = process.env.SHOPIFY_ACCESS_TOKEN;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing Shopify access token" });
+    if (error || !shopRow?.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "No access token stored for this shop",
+      });
     }
+
+    const token = shopRow.access_token;
 
     const response = await fetch(
       `https://${shop}/admin/api/2023-10/shop.json`,
@@ -164,6 +147,11 @@ router.get("/test", async (_req, res) => {
     );
 
     const data = await response.json();
+    if (!response.ok) {
+      console.error("❌ Shopify test failed:", data);
+      return res.status(500).json({ ok: false, error: data });
+    }
+
     res.json({ ok: true, shop: data.shop });
   } catch (err) {
     console.error(err);
@@ -171,29 +159,34 @@ router.get("/test", async (_req, res) => {
   }
 });
 
-// 4️⃣ Update product price (used by Autopilot FULL mode)
+// 4️⃣ Update price on Shopify (used by Autopilot in FULL mode)
 router.post("/update-price", async (req, res) => {
   const { shop, product_id, new_price } = req.body;
 
   if (!shop || !product_id || !new_price) {
     return res
       .status(400)
-      .json({ ok: false, error: "Missing shop, product_id, or new_price" });
+      .json({ ok: false, error: "shop, product_id, new_price are required" });
   }
 
   try {
-    // Get token from DB or env
-    let token = await getShopToken(shop);
-    if (!token) token = process.env.SHOPIFY_ACCESS_TOKEN;
+    // ✅ Get access token from Supabase
+    const { data: shopRow, error: shopError } = await supabase
+      .from("shops")
+      .select("access_token")
+      .eq("shop_domain", shop)
+      .single();
 
-    if (!token) {
-      return res.status(401).json({
-        ok: false,
-        error: "No Shopify access token available for this shop",
-      });
+    if (shopError || !shopRow?.access_token) {
+      console.error("❌ No access token for shop:", shopError?.message);
+      return res
+        .status(401)
+        .json({ ok: false, error: "Missing access token for this shop" });
     }
 
-    // 1) Fetch product to get variant ID
+    const token = shopRow.access_token;
+
+    // 4a️⃣ Fetch product to get its first variant
     const prodRes = await fetch(
       `https://${shop}/admin/api/2023-10/products/${product_id}.json`,
       {
@@ -203,70 +196,63 @@ router.post("/update-price", async (req, res) => {
         },
       }
     );
-
-    const prodData = await prodRes.json();
+    const prodJson = await prodRes.json();
 
     if (!prodRes.ok) {
-      console.error("❌ Failed to load product from Shopify:", prodData);
-      return res.status(500).json({
-        ok: false,
-        error: "Failed to load product from Shopify",
-        details: prodData,
-      });
+      console.error("❌ Shopify product fetch failed:", prodJson);
+      throw new Error("Failed to fetch product from Shopify");
     }
 
-    const product = prodData.product;
-    if (!product?.variants?.length) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "Product has no variants to update" });
+    const variant = prodJson?.product?.variants?.[0];
+    if (!variant) {
+      throw new Error("No variants found for this product");
     }
 
-    const primaryVariant = product.variants[0];
+    const variantId = variant.id;
 
-    // 2) Send price update
-    const body = {
-      product: {
-        id: product.id,
-        variants: [
-          {
-            id: primaryVariant.id,
-            price: String(new_price),
-          },
-        ],
-      },
-    };
-
+    // 4b️⃣ Update the variant price
     const updateRes = await fetch(
-      `https://${shop}/admin/api/2023-10/products/${product_id}.json`,
+      `https://${shop}/admin/api/2023-10/variants/${variantId}.json`,
       {
         method: "PUT",
         headers: {
           "X-Shopify-Access-Token": token,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          variant: {
+            id: variantId,
+            price: new_price,
+          },
+        }),
       }
     );
 
-    const updateData = await updateRes.json();
+    const updateJson = await updateRes.json();
 
     if (!updateRes.ok) {
-      console.error("❌ Shopify update error:", updateData);
-      return res.status(500).json({
-        ok: false,
-        error: "Failed to update price on Shopify",
-        details: updateData,
-      });
+      console.error("❌ Shopify price update failed:", updateJson);
+      throw new Error("Failed to update price on Shopify");
+    }
+
+    // 4c️⃣ Keep Supabase in sync
+    const { error: dbError } = await supabase
+      .from("products")
+      .update({ price: new_price })
+      .eq("shop_domain", shop)
+      .eq("shopify_product_id", product_id);
+
+    if (dbError) {
+      console.error("⚠️ Supabase price update failed:", dbError.message);
     }
 
     console.log(
-      `💰 Shopify price updated for product ${product_id} → £${new_price}`
+      `✅ Price updated on Shopify for product ${product_id} → £${new_price}`
     );
-    return res.json({ ok: true, product: updateData.product });
+    res.json({ ok: true, variant: updateJson.variant || null });
   } catch (err) {
-    console.error("❌ Exception in /update-price:", err.message);
-    return res.status(500).json({ ok: false, error: err.message });
+    console.error("❌ Shopify update error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
