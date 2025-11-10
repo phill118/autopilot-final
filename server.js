@@ -76,6 +76,24 @@ app.post("/api/shopify/mode", async (req, res) => {
   }
 });
 
+// ⚠️ NEW: Update AI risk level
+app.post("/api/shopify/risk", async (req, res) => {
+  const { shop, risk_level } = req.body;
+  try {
+    const { error } = await supabase
+      .from("shops")
+      .update({ risk_level })
+      .eq("shop_domain", shop);
+
+    if (error) throw error;
+    console.log(`⚖️ Risk level for ${shop} updated to: ${risk_level}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ Failed to update risk level:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ✅ Product API routes
 app.use("/api/products", products);
 app.use("/api/products", productsList);
@@ -89,19 +107,15 @@ app.use("/api/feedback", aiFeedback);
 // ✅ Performance routes
 app.use("/api/performance", performance);
 
-// ✅ Seasonal events routes
+// ✅ Seasonal events
 app.use("/api/events", eventsApi);
 
-// ✅ Autopilot AI Route (manual trigger from dashboard)
+// ✅ Autopilot AI Route
 app.get("/api/autopilot/run", async (req, res) => {
   const shop = req.query.shop || "all-sorts-dropped.myshopify.com";
   try {
     const result = await runAutopilot(shop);
-    res.json({
-      ok: true,
-      message: "Autopilot completed successfully",
-      ...result,
-    });
+    res.json({ ok: true, message: "Autopilot completed successfully", ...result });
   } catch (err) {
     console.error("❌ Autopilot error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
@@ -113,21 +127,5 @@ const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
   console.log(`🌍 App URL: ${process.env.SHOPIFY_APP_URL}`);
-  console.log(
-    `🧭 Using redirectUri: ${process.env.SHOPIFY_APP_URL}/api/shopify/callback`
-  );
-
-  // 🕒 SIMPLE AUTOPILOT SCHEDULER
-  // Runs every 15 minutes. You can change 15 * 60 * 1000 to 60 * 60 * 1000 for hourly, etc.
-  const SHOP = "all-sorts-dropped.myshopify.com";
-
-  setInterval(async () => {
-    try {
-      console.log("⏱️ Scheduled Autopilot run starting…");
-      await runAutopilot(SHOP);
-      console.log("⏱️ Scheduled Autopilot run finished.");
-    } catch (err) {
-      console.error("❌ Scheduled Autopilot error:", err.message);
-    }
-  }, 15 * 60 * 1000); // every 15 minutes
+  console.log(`🧭 Using redirectUri: ${process.env.SHOPIFY_APP_URL}/api/shopify/callback`);
 });
