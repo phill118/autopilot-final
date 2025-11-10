@@ -76,17 +76,17 @@ app.post("/api/shopify/mode", async (req, res) => {
   }
 });
 
-// ⚠️ NEW: Update AI risk level
+// ⚖️ Update AI risk level
 app.post("/api/shopify/risk", async (req, res) => {
-  const { shop, risk_level } = req.body;
+  const { shop, risk } = req.body; // 👈 expects "risk" from frontend
   try {
     const { error } = await supabase
       .from("shops")
-      .update({ risk_level })
+      .update({ risk_level: risk }) // 👈 writes into risk_level column
       .eq("shop_domain", shop);
 
     if (error) throw error;
-    console.log(`⚖️ Risk level for ${shop} updated to: ${risk_level}`);
+    console.log(`⚖️ Risk level for ${shop} updated to: ${risk}`);
     res.json({ ok: true });
   } catch (err) {
     console.error("❌ Failed to update risk level:", err.message);
@@ -115,7 +115,11 @@ app.get("/api/autopilot/run", async (req, res) => {
   const shop = req.query.shop || "all-sorts-dropped.myshopify.com";
   try {
     const result = await runAutopilot(shop);
-    res.json({ ok: true, message: "Autopilot completed successfully", ...result });
+    res.json({
+      ok: true,
+      message: "Autopilot completed successfully",
+      ...result,
+    });
   } catch (err) {
     console.error("❌ Autopilot error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
@@ -127,5 +131,7 @@ const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
   console.log(`🌍 App URL: ${process.env.SHOPIFY_APP_URL}`);
-  console.log(`🧭 Using redirectUri: ${process.env.SHOPIFY_APP_URL}/api/shopify/callback`);
+  console.log(
+    `🧭 Using redirectUri: ${process.env.SHOPIFY_APP_URL}/api/shopify/callback`
+  );
 });
