@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const router = express.Router();
 
-// ✅ Supabase client (backend-only, safe)
+// 🔗 Supabase client (for updating product prices in our DB)
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -41,7 +41,7 @@ router.get("/auth", (req, res) => {
   res.redirect(installUrl);
 });
 
-// 2️⃣ Handle Shopify OAuth callback
+// 2️⃣ Handle Shopify callback
 router.get("/callback", async (req, res) => {
   const shop = req.query.shop;
   const hmac = req.query.hmac;
@@ -51,7 +51,7 @@ router.get("/callback", async (req, res) => {
     return res.status(400).send("Missing parameters");
   }
 
-  // ✅ Verify HMAC
+  // Verify HMAC
   const message = Object.keys(req.query)
     .filter((key) => key !== "hmac")
     .sort()
@@ -88,25 +88,10 @@ router.get("/callback", async (req, res) => {
       return res.status(500).send("Failed to retrieve access token.");
     }
 
-    const accessToken = data.access_token;
-
+    // ⚠️ In production you should store this in Supabase, not in process.env
+    process.env.SHOPIFY_ACCESS_TOKEN = data.access_token;
     console.log("✅ Shopify store successfully connected!");
-    console.log("🔑 Access Token:", accessToken);
-
-    // ✅ Store token in Supabase shops table
-    const { error: upsertError } = await supabase.from("shops").upsert(
-      {
-        shop_domain: shop,
-        access_token: accessToken,
-      },
-      { onConflict: "shop_domain" } // requires unique constraint on shop_domain
-    );
-
-    if (upsertError) {
-      console.error("❌ Failed to upsert shop token:", upsertError.message);
-    } else {
-      console.log(`🗃️ Stored access token for shop: ${shop}`);
-    }
+    console.log("🔑 Access Token:", data.access_token);
 
     res.send("✅ Shopify store successfully connected!");
   } catch (err) {
@@ -116,42 +101,25 @@ router.get("/callback", async (req, res) => {
 });
 
 // 3️⃣ Test Shopify API connection
-router.get("/test", async (req, res) => {
-  const shop = req.query.shop || "all-sorts-dropped.myshopify.com";
-
+router.get("/test", async (_req, res) => {
   try {
-    // ✅ Fetch token from Supabase
-    const { data: shopRow, error } = await supabase
-      .from("shops")
-      .select("access_token")
-      .eq("shop_domain", shop)
-      .single();
-
-    if (error || !shopRow?.access_token) {
-      return res.status(401).json({
-        ok: false,
-        error: "No access token stored for this shop",
-      });
+    if (!process.env.SHOPIFY_ACCESS_TOKEN) {
+      return res
+        .status(401)
+        .json({ ok: false, error: "Missing Shopify access token" });
     }
 
-    const token = shopRow.access_token;
-
     const response = await fetch(
-      `https://${shop}/admin/api/2023-10/shop.json`,
+      "https://all-sorts-dropped.myshopify.com/admin/api/2023-10/shop.json",
       {
         headers: {
-          "X-Shopify-Access-Token": token,
+          "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
           "Content-Type": "application/json",
         },
       }
     );
 
     const data = await response.json();
-    if (!response.ok) {
-      console.error("❌ Shopify test failed:", data);
-      return res.status(500).json({ ok: false, error: data });
-    }
-
     res.json({ ok: true, shop: data.shop });
   } catch (err) {
     console.error(err);
@@ -159,99 +127,34 @@ router.get("/test", async (req, res) => {
   }
 });
 
-// 4️⃣ Update price on Shopify (used by Autopilot in FULL mode)
+// 4️⃣ Stub: Update price in Supabase (placeholder for real Shopify update)
 router.post("/update-price", async (req, res) => {
   const { shop, product_id, new_price } = req.body;
 
-  if (!shop || !product_id || !new_price) {
+  if (!shop || !product_id || new_price == null) {
     return res
       .status(400)
-      .json({ ok: false, error: "shop, product_id, new_price are required" });
+      .json({ ok: false, error: "Missing shop, product_id, or new_price" });
   }
 
   try {
-    // ✅ Get access token from Supabase
-    const { data: shopRow, error: shopError } = await supabase
-      .from("shops")
-      .select("access_token")
-      .eq("shop_domain", shop)
-      .single();
-
-    if (shopError || !shopRow?.access_token) {
-      console.error("❌ No access token for shop:", shopError?.message);
-      return res
-        .status(401)
-        .json({ ok: false, error: "Missing access token for this shop" });
-    }
-
-    const token = shopRow.access_token;
-
-    // 4a️⃣ Fetch product to get its first variant
-    const prodRes = await fetch(
-      `https://${shop}/admin/api/2023-10/products/${product_id}.json`,
-      {
-        headers: {
-          "X-Shopify-Access-Token": token,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-    const prodJson = await prodRes.json();
-
-    if (!prodRes.ok) {
-      console.error("❌ Shopify product fetch failed:", prodJson);
-      throw new Error("Failed to fetch product from Shopify");
-    }
-
-    const variant = prodJson?.product?.variants?.[0];
-    if (!variant) {
-      throw new Error("No variants found for this product");
-    }
-
-    const variantId = variant.id;
-
-    // 4b️⃣ Update the variant price
-    const updateRes = await fetch(
-      `https://${shop}/admin/api/2023-10/variants/${variantId}.json`,
-      {
-        method: "PUT",
-        headers: {
-          "X-Shopify-Access-Token": token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          variant: {
-            id: variantId,
-            price: new_price,
-          },
-        }),
-      }
-    );
-
-    const updateJson = await updateRes.json();
-
-    if (!updateRes.ok) {
-      console.error("❌ Shopify price update failed:", updateJson);
-      throw new Error("Failed to update price on Shopify");
-    }
-
-    // 4c️⃣ Keep Supabase in sync
-    const { error: dbError } = await supabase
+    const { data, error } = await supabase
       .from("products")
-      .update({ price: new_price })
+      .update({ price: String(new_price) })
       .eq("shop_domain", shop)
-      .eq("shopify_product_id", product_id);
+      .eq("shopify_product_id", product_id)
+      .select()
+      .maybeSingle();
 
-    if (dbError) {
-      console.error("⚠️ Supabase price update failed:", dbError.message);
-    }
+    if (error) throw error;
 
-    console.log(
-      `✅ Price updated on Shopify for product ${product_id} → £${new_price}`
-    );
-    res.json({ ok: true, variant: updateJson.variant || null });
+    console.log(`💾 Supabase price updated for ${product_id}: £${new_price}`);
+
+    // 🔮 Later: extend this to call Shopify Admin API to update the real store price.
+
+    res.json({ ok: true, product: data });
   } catch (err) {
-    console.error("❌ Shopify update error:", err.message);
+    console.error("❌ /api/shopify/update-price error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
