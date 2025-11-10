@@ -27,7 +27,7 @@ async function getFeedbackTrends(shop_domain, product_id, action) {
   return { approved, rejected };
 }
 
-// 🧩 Log every AI action
+// 🧾 Log every AI action
 async function logAIAction(
   shop_domain,
   product_id,
@@ -39,15 +39,14 @@ async function logAIAction(
   const { error } = await supabase.from("ai_actions").insert([
     { shop_domain, product_id, action, details, reason, status },
   ]);
-  if (error) {
+  if (error)
     console.error("❌ Failed to log AI action:", error.message);
-  } else {
+  else
     console.log(`🧾 Logged AI action: ${action} for product ${product_id}`);
-  }
 }
 
-// 🧠 Generate a reasoning string (for price changes)
-function generateReason(product, performance, newPrice, oldPrice, event) {
+// 🧠 Generate a reasoning string
+function generateReason(product, performance, newPrice, oldPrice, event, risk) {
   const change = newPrice > oldPrice ? "increase" : "decrease";
   let reason = `Price ${change} from £${oldPrice} to £${newPrice}. `;
 
@@ -66,61 +65,105 @@ function generateReason(product, performance, newPrice, oldPrice, event) {
     )
   )
     reason += `Relevant to ${event.name}, boosting price for seasonal demand. `;
+  if (risk === "safe")
+    reason += "Using safe risk level (softer adjustments). ";
+  if (risk === "aggressive")
+    reason += "Using aggressive risk level (bolder adjustments). ";
 
   return reason.trim();
 }
 
-// 🧮 Calculate the optimal price
-function calculateOptimalPrice(product, performance, event) {
-  let price = parseFloat(product.price);
+// 🧮 Calculate a *base* optimal price (before risk scaling)
+function calculateBasePrice(product, performance, event) {
+  const price = parseFloat(product.price);
   let newPrice = price;
 
-  // Good margin + strong demand → gently increase
+  // High margin + strong conversion → gentle increase
   if (
     performance?.profit_margin > 0.25 &&
     performance?.conversion_rate > 0.08
-  )
+  ) {
     newPrice = price * 1.08;
+  }
 
-  // Very low conversion → try lowering price
-  if (performance?.conversion_rate < 0.02)
+  // Very low conversion → test a lower price
+  if (performance?.conversion_rate < 0.02) {
     newPrice = price * 0.95;
+  }
 
-  // Very low stock → protect margin with slight increase
-  if (product.inventory_quantity < 5)
-    newPrice = price * 1.10;
+  // Low inventory → protect margin
+  if (product.inventory_quantity < 5) {
+    newPrice = price * 1.1;
+  }
 
-  // Seasonal boost for relevant products
+  // Seasonal event match → demand spike
   if (
     event &&
     event.product_keywords?.some((k) =>
       product.title.toLowerCase().includes(k.toLowerCase())
     )
-  )
+  ) {
     newPrice = price * 1.15;
+  }
 
   return Math.round(newPrice * 100) / 100;
+}
+
+// 🎚️ Apply risk level scaling to the price change
+function applyRiskLevel(oldPrice, baseNewPrice, riskLevel) {
+  if (!baseNewPrice || baseNewPrice === oldPrice) return oldPrice;
+
+  const diff = baseNewPrice - oldPrice;
+  let scaledDiff = diff;
+
+  switch (riskLevel) {
+    case "safe":
+      // Only half as bold
+      scaledDiff = diff * 0.5;
+      break;
+    case "aggressive":
+      // 50% more aggressive
+      scaledDiff = diff * 1.5;
+      break;
+    case "normal":
+    default:
+      // Use base change
+      scaledDiff = diff;
+      break;
+  }
+
+  const finalPrice = oldPrice + scaledDiff;
+  return Math.round(finalPrice * 100) / 100;
 }
 
 // 🧠 Main Autopilot Brain
 export async function runAutopilot(shop) {
   console.log(`🤖 Running autopilot for ${shop}...`);
 
-  // 1️⃣ Seasonal event (if any)
+  // 1️⃣ Seasonal event (from DB)
   const { data: events } = await supabase
     .from("seasonal_events")
     .select("*")
-    .eq("active", true);
-  const activeEvent = events?.[0] || null;
+    .eq("active", true)
+    .order("start_date", { ascending: true });
 
-  // 2️⃣ Shop mode
+  const activeEvent = events?.[0] || null;
+  if (activeEvent) {
+    console.log(`🗓️ Active event: ${activeEvent.name}`);
+  } else {
+    console.log("🕐 No active seasonal event.");
+  }
+
+  // 2️⃣ Shop mode + risk level
   const { data: shopInfo } = await supabase
     .from("shops")
-    .select("autopilot_mode")
+    .select("autopilot_mode, risk_level")
     .eq("shop_domain", shop)
-    .single();
+    .maybeSingle();
+
   const mode = shopInfo?.autopilot_mode || "manual";
-  console.log(`🧭 Mode: ${mode}`);
+  const riskLevel = shopInfo?.risk_level || "normal";
+  console.log(`🧭 Mode: ${mode} (risk: ${riskLevel})`);
 
   // 3️⃣ Get products
   const { data: products, error } = await supabase
@@ -131,17 +174,19 @@ export async function runAutopilot(shop) {
   if (error) throw new Error(error.message);
   if (!products?.length) throw new Error("No products found.");
 
-  // 📊 Counters for the summary
   let analyzed = 0;
   let priceSuggestions = 0;
-  let priceApplied = 0;
-  let skippedDueToFeedback = 0;
+  let applied = 0;
+  let skippedByFeedback = 0;
   let marketingSuggestions = 0;
 
   // 4️⃣ Evaluate each product
   for (const p of products) {
     analyzed++;
 
+    const oldPrice = parseFloat(p.price);
+
+    // 🔎 Performance snapshot
     const { data: perf } = await supabase
       .from("product_performance")
       .select("*")
@@ -149,10 +194,11 @@ export async function runAutopilot(shop) {
       .eq("product_id", p.shopify_product_id)
       .maybeSingle();
 
-    const newPrice = calculateOptimalPrice(p, perf, activeEvent);
-    const priceChanged = newPrice !== parseFloat(p.price);
+    // 🧮 Base price from rules
+    const baseNewPrice = calculateBasePrice(p, perf, activeEvent);
+    const baseChanged = baseNewPrice !== oldPrice;
 
-    // 🧩 Check AI feedback before deciding on PRICE changes
+    // 🧠 Feedback trends for price changes
     const trend = await getFeedbackTrends(
       shop,
       p.shopify_product_id,
@@ -163,130 +209,124 @@ export async function runAutopilot(shop) {
       console.log(
         `⚖️ Skipping price change for ${p.title} — user disagreed before`
       );
-      skippedDueToFeedback++;
+      skippedByFeedback++;
+
       await logAIAction(
         shop,
         p.shopify_product_id,
         "price_skipped_due_to_feedback",
-        { old_price: p.price, mode },
+        { old_price: p.price, mode, risk_level: riskLevel },
         "Skipped due to repeated user rejection",
         "skipped"
       );
-    } else if (priceChanged) {
-      const reason = generateReason(
-        p,
-        perf,
-        newPrice,
-        parseFloat(p.price),
-        activeEvent
+
+      // Still can suggest marketing actions below
+    } else if (baseChanged) {
+      // 🎚️ Apply risk level to the base price
+      const riskAdjustedPrice = applyRiskLevel(
+        oldPrice,
+        baseNewPrice,
+        riskLevel
       );
-      console.log(
-        `💹 ${p.title}: £${p.price} → £${newPrice} (${mode} mode)`
-      );
-      console.log(`🧠 Reason: ${reason}`);
+      const priceChanged = riskAdjustedPrice !== oldPrice;
 
-      priceSuggestions++;
+      if (priceChanged) {
+        priceSuggestions++;
+        const reason = generateReason(
+          p,
+          perf,
+          riskAdjustedPrice,
+          oldPrice,
+          activeEvent,
+          riskLevel
+        );
 
-      await logAIAction(
-        shop,
-        p.shopify_product_id,
-        "price_adjustment",
-        {
-          old_price: p.price,
-          new_price: newPrice,
-          mode,
-        },
-        reason,
-        "suggested"
-      );
+        console.log(
+          `💹 ${p.title}: £${oldPrice} → £${riskAdjustedPrice} (${mode} mode, risk: ${riskLevel})`
+        );
+        console.log(`🧠 Reason: ${reason}`);
 
-      // Apply automatically in FULL mode
-      if (mode === "full") {
-        try {
-          const res = await fetch(
-            `${process.env.SHOPIFY_APP_URL}/api/shopify/update-price`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                shop,
-                product_id: p.shopify_product_id,
-                new_price: newPrice,
-              }),
-            }
-          );
+        await logAIAction(
+          shop,
+          p.shopify_product_id,
+          "price_adjustment",
+          {
+            old_price: oldPrice,
+            base_price: baseNewPrice,
+            new_price: riskAdjustedPrice,
+            mode,
+            risk_level: riskLevel,
+          },
+          reason
+        );
 
-          if (!res.ok) throw new Error("Shopify update failed");
+        // 🚀 FULL mode → actually update Shopify
+        if (mode === "full") {
+          try {
+            const res = await fetch(
+              `${process.env.SHOPIFY_APP_URL}/api/shopify/update-price`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  shop,
+                  product_id: p.shopify_product_id,
+                  new_price: riskAdjustedPrice,
+                }),
+              }
+            );
 
-          priceApplied++;
+            if (!res.ok) throw new Error("Shopify update failed");
 
-          await logAIAction(
-            shop,
-            p.shopify_product_id,
-            "price_applied",
-            { new_price: newPrice, mode },
-            "Applied automatically due to Full AI mode.",
-            "completed"
-          );
+            await logAIAction(
+              shop,
+              p.shopify_product_id,
+              "price_applied",
+              { new_price: riskAdjustedPrice, mode, risk_level: riskLevel },
+              "Applied automatically due to Full AI mode.",
+              "completed"
+            );
 
-          console.log(`✅ Price updated on Shopify: ${p.title}`);
-        } catch (err) {
-          console.error(`❌ Shopify update error: ${err.message}`);
+            applied++;
+            console.log(`✅ Price updated on Shopify: ${p.title}`);
+          } catch (err) {
+            console.error(`❌ Shopify update error: ${err.message}`);
+          }
         }
       }
     }
 
-    // 🧠 5️⃣ Simple marketing intelligence (ad suggestions)
-    const conv = perf?.conversion_rate ?? 0;
-    const margin = perf?.profit_margin ?? 0;
-
-    // Winner: good conversion + good margin ⇒ boost ads
-    if (conv > 0.05 && margin > 0.2) {
+    // 📣 Marketing / Ad suggestions
+    if (
+      perf &&
+      perf.conversion_rate >= 0.05 &&
+      perf.profit_margin >= 0.3
+    ) {
       marketingSuggestions++;
       await logAIAction(
         shop,
         p.shopify_product_id,
         "ad_boost_suggested",
-        {
-          conversion_rate: conv,
-          profit_margin: margin,
-          mode,
-          event: activeEvent?.name ?? null,
-        },
-        "Strong performance — recommend increasing ad budget for this product.",
-        "suggested"
+        { mode, risk_level: riskLevel },
+        "Strong performance — recommend increasing ad budget for this product."
       );
-    }
-    // Loser: poor conversion or terrible margin ⇒ reduce/kill ads
-    else if (conv < 0.01 || margin < 0.05) {
-      marketingSuggestions++;
-      await logAIAction(
-        shop,
-        p.shopify_product_id,
-        "ad_reduce_suggested",
-        {
-          conversion_rate: conv,
-          profit_margin: margin,
-          mode,
-        },
-        "Weak performance — consider reducing or pausing ads and replacing this product.",
-        "suggested"
+      console.log(
+        `📣 Ad boost suggested for ${p.title} — strong performance detected`
       );
     }
   }
 
-  console.log(`✅ Autopilot finished for ${shop}`);
   console.log(
-    `📊 Summary — analyzed: ${analyzed}, price_suggestions: ${priceSuggestions}, applied: ${priceApplied}, skipped_due_to_feedback: ${skippedDueToFeedback}, marketing_suggestions: ${marketingSuggestions}`
+    `📊 Summary — analyzed: ${analyzed}, price_suggestions: ${priceSuggestions}, applied: ${applied}, skipped_due_to_feedback: ${skippedByFeedback}, marketing_suggestions: ${marketingSuggestions}`
   );
 
-  // 🔙 return stats for the dashboard
+  console.log(`✅ Autopilot finished for ${shop}`);
   return {
     ok: true,
     analyzed,
-    price_adjustments: priceSuggestions,
-    price_applied: priceApplied,
-    skipped_due_to_feedback: skippedDueToFeedback,
-    marketing_suggestions: marketingSuggestions,
+    priceSuggestions,
+    applied,
+    skippedByFeedback,
+    marketingSuggestions,
   };
 }
