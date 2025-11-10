@@ -92,12 +92,16 @@ app.use("/api/performance", performance);
 // ✅ Seasonal events routes
 app.use("/api/events", eventsApi);
 
-// ✅ Autopilot AI Route
+// ✅ Autopilot AI Route (manual trigger from dashboard)
 app.get("/api/autopilot/run", async (req, res) => {
   const shop = req.query.shop || "all-sorts-dropped.myshopify.com";
   try {
     const result = await runAutopilot(shop);
-    res.json({ ok: true, message: "Autopilot completed successfully", ...result });
+    res.json({
+      ok: true,
+      message: "Autopilot completed successfully",
+      ...result,
+    });
   } catch (err) {
     console.error("❌ Autopilot error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
@@ -109,5 +113,21 @@ const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
   console.log(`🌍 App URL: ${process.env.SHOPIFY_APP_URL}`);
-  console.log(`🧭 Using redirectUri: ${process.env.SHOPIFY_APP_URL}/api/shopify/callback`);
+  console.log(
+    `🧭 Using redirectUri: ${process.env.SHOPIFY_APP_URL}/api/shopify/callback`
+  );
+
+  // 🕒 SIMPLE AUTOPILOT SCHEDULER
+  // Runs every 15 minutes. You can change 15 * 60 * 1000 to 60 * 60 * 1000 for hourly, etc.
+  const SHOP = "all-sorts-dropped.myshopify.com";
+
+  setInterval(async () => {
+    try {
+      console.log("⏱️ Scheduled Autopilot run starting…");
+      await runAutopilot(SHOP);
+      console.log("⏱️ Scheduled Autopilot run finished.");
+    } catch (err) {
+      console.error("❌ Scheduled Autopilot error:", err.message);
+    }
+  }, 15 * 60 * 1000); // every 15 minutes
 });
