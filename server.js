@@ -15,7 +15,7 @@ import aiActions from "./aiActions.js";
 import aiFeedback from "./aiFeedback.js";
 import performance from "./performance.js";
 import eventsApi from "./seasonalEventsApi.js";
-import autopilotRuns from "./autopilotRuns.js"; // 👈 NEW
+import aiAdvice from "./aiAdvice.js"; // 👈 NEW
 
 dotenv.config();
 
@@ -105,25 +105,21 @@ app.use("/api/ai", aiActions);
 // ✅ AI feedback routes
 app.use("/api/feedback", aiFeedback);
 
+// ✅ AI advice routes (config suggestions)
+app.use("/api/ai", aiAdvice); // 👈 NEW (adds /api/ai/advice)
+
 // ✅ Performance routes
 app.use("/api/performance", performance);
 
 // ✅ Seasonal events
 app.use("/api/events", eventsApi);
 
-// ✅ Autopilot run history
-app.use("/api/autopilot", autopilotRuns);
-
 // ✅ Autopilot AI Route
 app.get("/api/autopilot/run", async (req, res) => {
   const shop = req.query.shop || "all-sorts-dropped.myshopify.com";
   try {
     const result = await runAutopilot(shop);
-    res.json({
-      ok: true,
-      message: "Autopilot completed successfully",
-      ...result,
-    });
+    res.json({ ok: true, message: "Autopilot completed successfully", ...result });
   } catch (err) {
     console.error("❌ Autopilot error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
