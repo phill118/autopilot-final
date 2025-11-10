@@ -15,6 +15,7 @@ import aiActions from "./aiActions.js";
 import aiFeedback from "./aiFeedback.js";
 import performance from "./performance.js";
 import eventsApi from "./seasonalEventsApi.js";
+import autopilotRuns from "./autopilotRuns.js"; // 👈 NEW
 
 dotenv.config();
 
@@ -78,15 +79,15 @@ app.post("/api/shopify/mode", async (req, res) => {
 
 // ⚖️ Update AI risk level
 app.post("/api/shopify/risk", async (req, res) => {
-  const { shop, risk } = req.body; // 👈 expects "risk" from frontend
+  const { shop, risk_level } = req.body;
   try {
     const { error } = await supabase
       .from("shops")
-      .update({ risk_level: risk }) // 👈 writes into risk_level column
+      .update({ risk_level })
       .eq("shop_domain", shop);
 
     if (error) throw error;
-    console.log(`⚖️ Risk level for ${shop} updated to: ${risk}`);
+    console.log(`⚖️ Risk level for ${shop} updated to: ${risk_level}`);
     res.json({ ok: true });
   } catch (err) {
     console.error("❌ Failed to update risk level:", err.message);
@@ -109,6 +110,9 @@ app.use("/api/performance", performance);
 
 // ✅ Seasonal events
 app.use("/api/events", eventsApi);
+
+// ✅ Autopilot run history
+app.use("/api/autopilot", autopilotRuns);
 
 // ✅ Autopilot AI Route
 app.get("/api/autopilot/run", async (req, res) => {
