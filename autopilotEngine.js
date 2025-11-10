@@ -1,14 +1,14 @@
 // autopilotEngine.js
 import { createClient } from "@supabase/supabase-js";
 import fetch from "node-fetch";
-import { getUpcomingEvents } from "./seasonalEvents.js";
 
+// Initialize Supabase client
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 🧠 Learn from past AI feedback (shared for pricing + ads)
+// 🧠 Learn from past AI feedback
 async function getFeedbackTrends(shop_domain, product_id, action) {
   const { data, error } = await supabase
     .from("ai_feedback")
@@ -28,7 +28,7 @@ async function getFeedbackTrends(shop_domain, product_id, action) {
   return { approved, rejected };
 }
 
-// 🧩 Log every AI action
+// 🧩 Log every AI action (price suggestions, skips, ad boosts, etc.)
 async function logAIAction(
   shop_domain,
   product_id,
@@ -40,8 +40,10 @@ async function logAIAction(
   const { error } = await supabase.from("ai_actions").insert([
     { shop_domain, product_id, action, details, reason, status },
   ]);
-  if (error) console.error("❌ Failed to log AI action:", error.message);
-  else console.log(`🧾 Logged AI action: ${action} for product ${product_id}`);
+  if (error)
+    console.error("❌ Failed to log AI action:", error.message);
+  else
+    console.log(`🧾 Logged AI action: ${action} for product ${product_id}`);
 }
 
 // 🧠 Generate a reasoning string
@@ -68,40 +70,43 @@ function generateReason(product, performance, newPrice, oldPrice, event) {
   return reason.trim();
 }
 
-// 🧮 Calculate the optimal price
-function calculateOptimalPrice(product, performance, event, riskLevel) {
-  let price = parseFloat(product.price);
+// 🧮 Calculate the optimal price (uses performance + event + risk)
+function calculateOptimalPrice(product, performance, event, risk_level) {
+  const price = parseFloat(product.price);
   let newPrice = price;
 
-  const conv = performance?.conversion_rate ?? 0;
-  const margin = performance?.profit_margin ?? 0;
-
-  // Base logic
-  if (margin > 0.25 && conv > 0.08) {
-    // winning product
-    newPrice = price * (riskLevel === "aggressive" ? 1.12 : 1.08);
+  // Base logic: use performance
+  if (
+    performance?.profit_margin > 0.25 &&
+    performance?.conversion_rate > 0.08
+  ) {
+    newPrice = price * 1.08;
   }
-
-  if (conv < 0.02) {
-    // underperformer
-    newPrice = price * (riskLevel === "aggressive" ? 0.9 : 0.95);
+  if (performance?.conversion_rate < 0.02) {
+    newPrice = price * 0.95;
   }
-
   if (product.inventory_quantity < 5) {
-    // protect margin on low stock
-    newPrice = price * (riskLevel === "safe" ? 1.05 : 1.1);
+    newPrice = price * 1.1;
   }
-
   if (
     event &&
     event.product_keywords?.some((k) =>
       product.title.toLowerCase().includes(k.toLowerCase())
     )
   ) {
-    // seasonal bump
-    newPrice = newPrice * (riskLevel === "aggressive" ? 1.2 : 1.15);
+    newPrice = price * 1.15;
   }
 
+  // Risk tuning
+  if (risk_level === "safe") {
+    // Soften moves
+    newPrice = price + (newPrice - price) * 0.5;
+  } else if (risk_level === "aggressive") {
+    // Amplify moves
+    newPrice = price + (newPrice - price) * 1.5;
+  }
+
+  // Round to 2 decimals
   return Math.round(newPrice * 100) / 100;
 }
 
@@ -109,17 +114,25 @@ function calculateOptimalPrice(product, performance, event, riskLevel) {
 export async function runAutopilot(shop) {
   console.log(`🤖 Running autopilot for ${shop}...`);
 
+  // Counters for summary + autopilot_runs table
+  let analyzedCount = 0;
+  let priceSuggestions = 0;
+  let appliedCount = 0;
+  let skippedDueToFeedback = 0;
+  let marketingSuggestions = 0;
+
   // 1️⃣ Seasonal event
   const { data: events } = await supabase
     .from("seasonal_events")
     .select("*")
     .eq("active", true);
+
   const activeEvent = events?.[0] || null;
   if (activeEvent) {
     console.log(`🗓️ Active event: ${activeEvent.name}`);
   }
 
-  // 2️⃣ Shop mode + risk level
+  // 2️⃣ Shop mode + risk
   const { data: shopInfo } = await supabase
     .from("shops")
     .select("autopilot_mode, risk_level")
@@ -135,18 +148,13 @@ export async function runAutopilot(shop) {
     .from("products")
     .select("*")
     .eq("shop_domain", shop);
+
   if (error) throw new Error(error.message);
   if (!products?.length) throw new Error("No products found.");
 
-  let analyzed = 0;
-  let priceSuggestions = 0;
-  let applied = 0;
-  let skippedDueToFeedback = 0;
-  let marketingSuggestions = 0;
-
   // 4️⃣ Evaluate each product
   for (const p of products) {
-    analyzed++;
+    analyzedCount += 1;
 
     const { data: perf } = await supabase
       .from("product_performance")
@@ -155,34 +163,35 @@ export async function runAutopilot(shop) {
       .eq("product_id", p.shopify_product_id)
       .maybeSingle();
 
-    // 🧮 Price decision
     const currentPrice = parseFloat(p.price);
-    const newPrice = calculateOptimalPrice(p, perf, activeEvent, risk);
+    const newPrice = calculateOptimalPrice(
+      p,
+      perf,
+      activeEvent,
+      risk
+    );
     const priceChanged = newPrice !== currentPrice;
 
-    // 🔁 4a. PRICE FEEDBACK — has user rejected these often?
-    const priceTrend = await getFeedbackTrends(
+    // 🧩 Check AI feedback before deciding
+    const trend = await getFeedbackTrends(
       shop,
       p.shopify_product_id,
       "price_adjustment"
     );
 
-    if (priceTrend.rejected > priceTrend.approved * 2) {
+    if (trend.rejected > trend.approved * 2) {
       console.log(
         `⚖️ Skipping price change for ${p.title} — user disagreed before`
       );
-      skippedDueToFeedback++;
-
+      skippedDueToFeedback += 1;
       await logAIAction(
         shop,
         p.shopify_product_id,
         "price_skipped_due_to_feedback",
-        { old_price: p.price, suggested_price: newPrice },
+        { mode, risk },
         "Skipped due to repeated user rejection.",
         "skipped"
       );
-
-      // ⛔ Do NOT change price, but still consider marketing below
     } else if (priceChanged) {
       const reason = generateReason(
         p,
@@ -191,27 +200,32 @@ export async function runAutopilot(shop) {
         currentPrice,
         activeEvent
       );
-      console.log(`💹 ${p.title}: £${p.price} → £${newPrice} (${mode} mode)`);
+
+      console.log(
+        `💹 ${p.title}: £${currentPrice.toFixed(
+          2
+        )} → £${newPrice.toFixed(2)} (${mode} mode)`
+      );
       console.log(`🧠 Reason: ${reason}`);
 
-      priceSuggestions++;
+      priceSuggestions += 1;
 
       await logAIAction(
         shop,
         p.shopify_product_id,
         "price_adjustment",
         {
-          old_price: p.price,
+          old_price: currentPrice,
           new_price: newPrice,
           mode,
           risk,
         },
         reason,
-        mode === "full" && risk !== "safe" ? "pending_apply" : "suggested"
+        mode === "full" ? "pending" : "suggested"
       );
 
-      // Apply automatically in FULL mode (except safe risk)
-      if (mode === "full" && risk !== "safe") {
+      // Apply automatically in FULL mode
+      if (mode === "full") {
         try {
           const res = await fetch(
             `${process.env.SHOPIFY_APP_URL}/api/shopify/update-price`,
@@ -225,8 +239,33 @@ export async function runAutopilot(shop) {
               }),
             }
           );
-          if (!res.ok) throw new Error("Shopify update failed");
-          applied++;
+
+          if (!res.ok) {
+            throw new Error("Shopify update failed");
+          }
+
+          // Update local DB price too
+          const { error: upErr } = await supabase
+            .from("products")
+            .update({ price: newPrice })
+            .eq("shopify_product_id", p.shopify_product_id)
+            .eq("shop_domain", shop);
+
+          if (upErr) {
+            console.error(
+              "⚠️ Failed to update price in Supabase:",
+              upErr.message
+            );
+          } else {
+            console.log(
+              `💾 Supabase price updated for ${p.shopify_product_id}: £${newPrice.toFixed(
+                2
+              )}`
+            );
+          }
+
+          appliedCount += 1;
+
           await logAIAction(
             shop,
             p.shopify_product_id,
@@ -235,6 +274,7 @@ export async function runAutopilot(shop) {
             "Applied automatically due to Full AI mode.",
             "completed"
           );
+
           console.log(`✅ Price updated on Shopify: ${p.title}`);
         } catch (err) {
           console.error(`❌ Shopify update error: ${err.message}`);
@@ -242,86 +282,68 @@ export async function runAutopilot(shop) {
       }
     }
 
-    // 🔍 4b. MARKETING / AD BOOST — only if performance is strong
-    const conv = perf?.conversion_rate ?? 0;
-    const margin = perf?.profit_margin ?? 0;
-
-    let isWinner =
-      conv > 0.05 && margin > 0.25; // baseline "winner" rule
-
+    // 📣 Marketing suggestion (ad boost)
     if (
-      activeEvent &&
-      activeEvent.product_keywords?.some((k) =>
-        p.title.toLowerCase().includes(k.toLowerCase())
-      )
+      perf &&
+      perf.conversion_rate > 0.05 &&
+      perf.profit_margin > 0.2
     ) {
-      // seasonal alignment makes it more winner-like
-      isWinner = true;
-    }
+      marketingSuggestions += 1;
 
-    if (isWinner) {
-      // 🔁 Check marketing feedback
-      const adTrend = await getFeedbackTrends(
+      await logAIAction(
         shop,
         p.shopify_product_id,
-        "ad_boost_suggested"
+        "ad_boost_suggested",
+        { mode, risk },
+        "Strong performance — recommend increasing ad budget for this product.",
+        "suggested"
       );
 
-      if (adTrend.rejected > adTrend.approved * 2) {
-        console.log(
-          `📉 Not suggesting ads for ${p.title} — user repeatedly rejected ad boosts`
-        );
-        skippedDueToFeedback++;
-
-        await logAIAction(
-          shop,
-          p.shopify_product_id,
-          "ad_boost_skipped_due_to_feedback",
-          { conv, margin, risk },
-          "Skipped ad boost due to repeated user rejection.",
-          "skipped"
-        );
-      } else {
-        let reason = "Strong performance — recommend increasing ad budget ";
-        reason += `for this product (conv=${Math.round(
-          conv * 100
-        )}%, margin=${Math.round(margin * 100)}%). `;
-
-        if (activeEvent) {
-          reason += `Also relevant for ${activeEvent.name}, good candidate for seasonal campaigns. `;
-        }
-
-        if (adTrend.approved >= 2 && risk === "aggressive") {
-          reason +=
-            "User has approved similar ad boosts before — treating as high-confidence winner.";
-        }
-
-        await logAIAction(
-          shop,
-          p.shopify_product_id,
-          "ad_boost_suggested",
-          { conv, margin, risk, event: activeEvent?.name || null },
-          reason,
-          "suggested"
-        );
-        marketingSuggestions++;
-        console.log(
-          `📣 Ad boost suggested for ${p.title} — strong performance detected`
-        );
-      }
+      console.log(
+        `📣 Ad boost suggested for ${p.title} — strong performance detected`
+      );
     }
   }
 
   console.log(
-    `📊 Summary — analyzed: ${analyzed}, price_suggestions: ${priceSuggestions}, applied: ${applied}, skipped_due_to_feedback: ${skippedDueToFeedback}, marketing_suggestions: ${marketingSuggestions}`
+    `📊 Summary — analyzed: ${analyzedCount}, price_suggestions: ${priceSuggestions}, applied: ${appliedCount}, skipped_due_to_feedback: ${skippedDueToFeedback}, marketing_suggestions: ${marketingSuggestions}`
   );
+
+  // 📝 Log the run into autopilot_runs
+  try {
+    const { error: runErr } = await supabase
+      .from("autopilot_runs")
+      .insert([
+        {
+          shop_domain: shop,
+          mode,
+          risk_level: risk,
+          analyzed: analyzedCount,
+          price_suggestions: priceSuggestions,
+          applied: appliedCount,
+          skipped_due_to_feedback: skippedDueToFeedback,
+          marketing_suggestions: marketingSuggestions,
+        },
+      ]);
+
+    if (runErr) {
+      console.error(
+        "⚠️ Failed to record autopilot run:",
+        runErr.message
+      );
+    } else {
+      console.log("🕒 Autopilot run recorded in autopilot_runs");
+    }
+  } catch (e) {
+    console.error("⚠️ Unexpected error logging autopilot run:", e.message);
+  }
 
   console.log(`✅ Autopilot finished for ${shop}`);
   return {
     ok: true,
-    analyzed,
+    analyzed: analyzedCount,
     price_suggestions: priceSuggestions,
-    applied,
+    applied: appliedCount,
     skipped_due_to_feedback: skippedDueToFeedback,
     marketing_suggestions: marketingSuggestions,
   };
