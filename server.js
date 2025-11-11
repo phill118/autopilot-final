@@ -77,9 +77,9 @@ app.post("/api/shopify/mode", async (req, res) => {
   }
 });
 
-// ⚖️ Update AI risk level
+// ⚠️ Update AI risk level
 app.post("/api/shopify/risk", async (req, res) => {
-  const { shop, risk_level } = req.body;
+  const { shop, risk_level } = req.body; // frontend sends risk_level now
   try {
     const { error } = await supabase
       .from("shops")
